@@ -1,0 +1,22 @@
+"""
+Configuration package for Road Damage CV application.
+"""
+
+from .settings import (
+    DEFAULT_RTMP,
+    DEFAULT_COM_PORT,
+    DEFAULT_BAUD,
+    DEFAULT_MODEL,
+    DEFAULT_ROBOFLOW_API_KEY,
+    DEFAULT_WORKSPACE,
+    DEFAULT_WORKFLOW_ID,
+    DEFAULT_LOCAL_INFERENCE_URL,
+    FRAME_SKIP_RATIO,
+    MAX_QUEUE_SIZE,
+    INFERENCE_TIMEOUT,
+    CLEANUP_TIMEOUT,
+    MODEL_TYPES,
+    SUPPORTED_BAUD_RATES,
+    MODELS_DIR,
+    LOGS_DIR
+)

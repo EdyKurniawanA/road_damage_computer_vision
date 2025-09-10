@@ -1,0 +1,44 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+.python-version
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs and runs
+logs/
+yolov5/runs/
+
+# Large model weights and caches
+models/*.pt
+models/*.onnx
+*.onnx
+*.pt
+.cache/
+
+# Test artifacts
+.pytest_cache/
+*.pytest_cache/
+coverage/
+.coverage*
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# Build
+build/
+dist/
+*.egg-info/
+**/__pycache__/
+
