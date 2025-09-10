@@ -75,6 +75,7 @@ class MainWindow(QWidget):
         # Create and start worker thread
         self.worker_thread = WorkerThread(config)
         self.worker_thread.frame_ready.connect(self._on_frame_ready)
+        self.worker_thread.gps_update.connect(self._on_gps_update)
         self.worker_thread.status_update.connect(self._on_status_update)
         self.worker_thread.start()
         
@@ -96,10 +97,15 @@ class MainWindow(QWidget):
         self.perf_timer.stop()
         self.stack.setCurrentWidget(self.home)
 
-    def _on_frame_ready(self, frame: np.ndarray, counts: dict):
+    def _on_frame_ready(self, frame: np.ndarray, counts: dict, gps_data: dict):
         """Handle frame from worker thread"""
         self.main.set_frame(frame)
         self.main.update_class_counts(counts)
+        self.main.update_gps_data(gps_data)
+
+    def _on_gps_update(self, gps_data: dict):
+        """Handle GPS-only updates from worker thread"""
+        self.main.update_gps_data(gps_data)
 
     def _on_status_update(self, message: str):
         """Handle status updates from worker thread"""

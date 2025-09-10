@@ -25,6 +25,8 @@ from ..config import (
     DEFAULT_WORKSPACE,
     DEFAULT_WORKFLOW_ID,
     DEFAULT_LOCAL_INFERENCE_URL,
+    GPS_UI_UPDATE_INTERVAL,
+    GPS_HISTORY_SIZE,
     MODEL_TYPES,
     SUPPORTED_BAUD_RATES,
     MODELS_DIR
@@ -182,6 +184,8 @@ class HomeScreen(QWidget):
             "model": model,
             "com_port": com_port,
             "baud": baud,
+            "gps_ui_update_interval": GPS_UI_UPDATE_INTERVAL,
+            "gps_history_size": GPS_HISTORY_SIZE,
         }
 
     def _get_roboflow_cloud_config(self, url: str, com_port: str, baud: int) -> dict:
@@ -216,6 +220,8 @@ class HomeScreen(QWidget):
             "workflow_id": workflow_id,
             "com_port": com_port,
             "baud": baud,
+            "gps_ui_update_interval": GPS_UI_UPDATE_INTERVAL,
+            "gps_history_size": GPS_HISTORY_SIZE,
         }
 
     def _get_roboflow_local_config(self, url: str, com_port: str, baud: int) -> dict:
@@ -251,6 +257,8 @@ class HomeScreen(QWidget):
             "workflow_id": workflow_id,
             "com_port": com_port,
             "baud": baud,
+            "gps_ui_update_interval": GPS_UI_UPDATE_INTERVAL,
+            "gps_history_size": GPS_HISTORY_SIZE,
         }
 
     def _find_available_models(self) -> list:

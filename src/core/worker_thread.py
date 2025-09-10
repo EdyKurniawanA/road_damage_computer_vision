@@ -75,7 +75,8 @@ from ..config import (
 
 class WorkerThread(QThread):
     """Separate thread for heavy processing to prevent GUI freezing"""
-    frame_ready = Signal(np.ndarray, dict)  # frame, counts
+    frame_ready = Signal(np.ndarray, dict, dict)  # frame, counts, gps_data
+    gps_update = Signal(dict)  # gps_data only
     status_update = Signal(str)
     
     def __init__(self, config: dict):
@@ -99,6 +100,14 @@ class WorkerThread(QThread):
         
         # GPS data
         self.latest_gps = {}
+        self.gps_history = []  # Store GPS data history
+        self.gps_update_count = 0
+        self.last_gps_update_time = 0
+        self.last_gps_ui_update = 0  # Track last UI update time
+        self.gps_ui_update_timer = 0  # Separate timer for UI updates
+        self.gps_signal_quality = "Unknown"
+        self.gps_ui_update_interval = self.config.get("gps_ui_update_interval", 3.0)  # Update UI every 3 seconds
+        self.gps_history_size = self.config.get("gps_history_size", 100)  # Keep last 100 GPS points
         
         # Setup logging
         self._setup_logging()
@@ -571,7 +580,7 @@ class WorkerThread(QThread):
 
                 # Emit results to GUI
                 print(f"Emitting frame to GUI with counts: {display_counts}")
-                self.frame_ready.emit(annotated, display_counts)
+                self.frame_ready.emit(annotated, display_counts, self.latest_gps)
                 
                 # Log data
                 if not self.log_queue.full():
@@ -832,7 +841,7 @@ class WorkerThread(QThread):
                         self.status_update.emit(f"Error drawing boxes: {e}")
             
             # Emit results to GUI
-            self.frame_ready.emit(annotated, counts)
+            self.frame_ready.emit(annotated, counts, self.latest_gps)
             
             # Log data
             if not self.log_queue.full():
@@ -954,7 +963,7 @@ class WorkerThread(QThread):
                     counts = {}
                 
                 # Emit results to GUI
-                self.frame_ready.emit(annotated, counts)
+                self.frame_ready.emit(annotated, counts, self.latest_gps)
                 
                 # Log data
                 if not self.log_queue.full():
@@ -1117,7 +1126,7 @@ class WorkerThread(QThread):
                 display_counts = counts if isinstance(counts, dict) else {}
             
             if annotated is not None:
-                self.frame_ready.emit(annotated, display_counts)
+                self.frame_ready.emit(annotated, display_counts, self.latest_gps)
                 
             if not self.log_queue.full():
                 self.log_queue.put((display_counts, video_frame))
@@ -1131,54 +1140,197 @@ class WorkerThread(QThread):
                 self._last_error_time = time.time()
 
     def _gps_loop(self):
-        """GPS NMEA processing"""
+        """GPS NMEA processing - reads from Arduino's parsed output"""
         if serial is None:
+            self.status_update.emit("GPS: pyserial not available - install with 'pip install pyserial'")
             return
             
+        # Convert baud rate to integer
         try:
-            ser = serial.Serial(self.config["com_port"], self.config["baud"], timeout=1)
-        except Exception:
-            ser = None
+            baud_rate = int(self.config["baud"])
+        except (ValueError, KeyError):
+            baud_rate = 9600
+            self.status_update.emit(f"GPS: Invalid baud rate, using {baud_rate}")
             
-        last_gga = {}
-        last_rmc = {}
+        com_port = self.config.get("com_port", "COM8")
+        self.status_update.emit(f"GPS: Attempting to connect to {com_port} at {baud_rate} baud...")
+        
+        ser = None
+        connection_attempts = 0
+        max_attempts = 5
+        
+        while not self.stop_event.is_set() and connection_attempts < max_attempts:
+            try:
+                ser = serial.Serial(com_port, baud_rate, timeout=2)
+                self.status_update.emit(f"GPS: Connected to {com_port}")
+                break
+            except serial.SerialException as e:
+                connection_attempts += 1
+                self.status_update.emit(f"GPS: Connection attempt {connection_attempts} failed: {e}")
+                if connection_attempts < max_attempts:
+                    time.sleep(2)
+                else:
+                    self.status_update.emit(f"GPS: Failed to connect after {max_attempts} attempts")
+                    return
+            except Exception as e:
+                self.status_update.emit(f"GPS: Unexpected error: {e}")
+                return
+                
+        if ser is None:
+            self.status_update.emit("GPS: No serial connection available")
+            return
+            
+        # GPS data tracking
+        last_data_time = time.time()
+        data_received = False
+        gps_data_complete = False
+        satellites_count = 0
+        hdop_value = 0
+        
+        # Initialize UI update timer
+        self.gps_ui_update_timer = time.time()
         
         try:
             while not self.stop_event.is_set():
-                if ser is None:
-                    time.sleep(1)
-                    continue
-                    
                 try:
                     line = ser.readline().decode(errors="ignore").strip()
-                    if not line.startswith("$"):
-                        continue
-                        
-                    parts = line.split(",")
-                    talker = parts[0][3:6]
+                    current_time = time.time()
                     
-                    if talker == "GGA" and len(parts) >= 10:
-                        lat = self._parse_lat(parts[2], parts[3])
-                        lon = self._parse_lon(parts[4], parts[5])
-                        alt = self._safe_float(parts[9])
-                        last_gga = {"lat": lat, "lon": lon, "alt": alt}
-                    elif talker == "RMC" and len(parts) >= 10:
-                        utc = self._parse_time(parts[1], parts[9])
-                        last_rmc = {"utc": utc}
-                    
-                    # Merge GPS data
-                    merged = {}
-                    merged.update(last_rmc)
-                    merged.update(last_gga)
-                    if merged:
-                        self.latest_gps = merged
+                    if line:  # Only process non-empty lines
+                        gps_updated = False
                         
-                except Exception:
+                        # Parse Arduino's formatted output
+                        if line.startswith("Latitude: "):
+                            lat_str = line.replace("Latitude: ", "").strip()
+                            try:
+                                lat = float(lat_str)
+                                if self._is_valid_coordinate(lat, -90, 90):
+                                    self.latest_gps["lat"] = lat
+                                    gps_updated = True
+                            except ValueError:
+                                pass
+                                
+                        elif line.startswith("Longitude: "):
+                            lon_str = line.replace("Longitude: ", "").strip()
+                            try:
+                                lon = float(lon_str)
+                                if self._is_valid_coordinate(lon, -180, 180):
+                                    self.latest_gps["lon"] = lon
+                                    gps_updated = True
+                            except ValueError:
+                                pass
+                                
+                        elif line.startswith("Altitude: "):
+                            alt_str = line.replace("Altitude: ", "").replace(" meters", "").strip()
+                            try:
+                                alt = float(alt_str)
+                                if -1000 <= alt <= 50000:  # Reasonable altitude range
+                                    self.latest_gps["alt"] = alt
+                                    gps_updated = True
+                            except ValueError:
+                                pass
+                                
+                        elif line.startswith("Date: "):
+                            date_str = line.replace("Date: ", "").strip()
+                            self.latest_gps["date"] = date_str
+                            gps_updated = True
+                            
+                        elif line.startswith("Time Local (WITA): "):
+                            time_str = line.replace("Time Local (WITA): ", "").strip()
+                            self.latest_gps["time"] = time_str
+                            gps_updated = True
+                            
+                        elif line.startswith("Time UTC: "):
+                            utc_str = line.replace("Time UTC: ", "").strip()
+                            self.latest_gps["utc"] = utc_str
+                            gps_updated = True
+                            
+                        elif line.startswith("Satellites: "):
+                            sat_str = line.replace("Satellites: ", "").strip()
+                            try:
+                                satellites_count = int(sat_str)
+                                self.latest_gps["satellites"] = satellites_count
+                                gps_updated = True
+                            except ValueError:
+                                pass
+                                
+                        elif line.startswith("HDOP: "):
+                            hdop_str = line.replace("HDOP: ", "").strip()
+                            try:
+                                hdop_value = float(hdop_str)
+                                self.latest_gps["hdop"] = hdop_value
+                                gps_updated = True
+                            except ValueError:
+                                pass
+                        
+                        # Update GPS data with timestamp and quality info
+                        if gps_updated:
+                            self.latest_gps["timestamp"] = current_time
+                            self.latest_gps["update_count"] = self.gps_update_count
+                            self.gps_update_count += 1
+                            self.last_gps_update_time = current_time
+                            data_received = True
+                            
+                            # Determine signal quality based on satellites and HDOP
+                            if satellites_count >= 6 and hdop_value <= 2.0:
+                                self.gps_signal_quality = "Excellent"
+                            elif satellites_count >= 4 and hdop_value <= 4.0:
+                                self.gps_signal_quality = "Good"
+                            elif satellites_count >= 3 and hdop_value <= 6.0:
+                                self.gps_signal_quality = "Fair"
+                            else:
+                                self.gps_signal_quality = "Poor"
+                            
+                            self.latest_gps["signal_quality"] = self.gps_signal_quality
+                            
+                            # Add to history (keep last N entries based on config)
+                            if len(self.gps_history) >= self.gps_history_size:
+                                self.gps_history.pop(0)
+                            self.gps_history.append(self.latest_gps.copy())
+                            
+                            # Check if we have complete GPS data
+                            if all(key in self.latest_gps for key in ["lat", "lon", "alt"]):
+                                gps_data_complete = True
+                                if not hasattr(self, '_gps_complete_notified') or not self._gps_complete_notified:
+                                    self.status_update.emit(f"GPS: Complete data received - {self.gps_signal_quality} signal")
+                                    self._gps_complete_notified = True
+                            
+                            # Emit GPS update immediately when new data is available
+                            # But only if we have complete GPS data
+                            if all(key in self.latest_gps for key in ["lat", "lon", "alt"]):
+                                # Debug: Print GPS data being sent to UI
+                                print(f"GPS UI Update (immediate): {self.latest_gps}")
+                                # Emit GPS data update immediately
+                                self.gps_update.emit(self.latest_gps.copy())
+                        
+                        # Debug: Print first few lines to help diagnose
+                        if not data_received and len(line) > 10:
+                            print(f"GPS Debug: {line}")
+                            
+                except Exception as e:
+                    print(f"GPS Error reading line: {e}")
                     continue
+                    
+                # Check if we've received data recently
+                if time.time() - last_data_time > 30:  # 30 seconds without data
+                    if not data_received:
+                        self.status_update.emit("GPS: No data received - check Arduino connection and GPS lock")
+                        self.gps_signal_quality = "No Signal"
+                    else:
+                        self.status_update.emit("GPS: Data stopped - check GPS signal")
+                        self.gps_signal_quality = "Lost"
+                    last_data_time = time.time()  # Reset timer
+                
+                # GPS updates are now emitted immediately when new data is available
+                # No need for periodic updates
+                    
+        except Exception as e:
+            self.status_update.emit(f"GPS: Error in GPS loop: {e}")
         finally:
             try:
                 if ser is not None:
                     ser.close()
+                    self.status_update.emit("GPS: Serial connection closed")
             except:
                 pass
 
@@ -1266,6 +1418,11 @@ class WorkerThread(QThread):
             return float(s)
         except Exception:
             return None
+    
+    @staticmethod
+    def _is_valid_coordinate(value: float, min_val: float, max_val: float) -> bool:
+        """Check if coordinate is within valid range"""
+        return min_val <= value <= max_val and value != 0.0
 
     @staticmethod
     def _parse_lat(lat_str: str, hemi: str) -> Optional[float]:

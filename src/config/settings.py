@@ -4,7 +4,7 @@ Configuration settings and constants for the Road Damage CV application.
 
 # Default configuration values
 DEFAULT_RTMP = "rtmp://192.168.1.102/live"
-DEFAULT_COM_PORT = "COM8"
+DEFAULT_COM_PORT = "COM5"
 DEFAULT_BAUD = "115200"
 DEFAULT_MODEL = "best_road_damage.onnx"
 DEFAULT_ROBOFLOW_API_KEY = "Pwr60R16IPozPzElpd1Q"
@@ -17,6 +17,10 @@ FRAME_SKIP_RATIO = 2  # Process every 2nd frame
 MAX_QUEUE_SIZE = 3
 INFERENCE_TIMEOUT = 0.1
 CLEANUP_TIMEOUT = 2.0
+
+# GPS settings
+GPS_UI_UPDATE_INTERVAL = 3.0  # Update GPS UI every 3 seconds
+GPS_HISTORY_SIZE = 100  # Keep last 100 GPS points in history
 
 # Model types
 MODEL_TYPES = {
