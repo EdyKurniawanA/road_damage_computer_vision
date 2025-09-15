@@ -190,6 +190,14 @@ class WorkerThread(QThread):
     def _run_local_model(self):
         """Run local YOLO model with optimizations - using YOLOv5 DetectMultiBackend"""
         try:
+            # Windows pathlib compatibility fix
+            import pathlib
+            import platform
+            import torch
+
+            if platform.system() == "Windows":
+                pathlib.PosixPath = pathlib.WindowsPath
+
             # Load model using YOLOv5 DetectMultiBackend (same as detect.py)
             self.status_update.emit("Loading custom model...")
             model_path = self.config["model"]
@@ -205,7 +213,7 @@ class WorkerThread(QThread):
                 self._load_onnx_model(model_path)
                 return
             
-            # Debug: Inspect model file before loading
+            # Debug: Inspect model file before loading (only for PyTorch models)
             self.status_update.emit("Debug: Inspecting model file...")
             print(f"Debug: Loading model from: {model_path}")
             try:
@@ -342,8 +350,8 @@ class WorkerThread(QThread):
             
             # Set model attributes (for compatibility with existing code)
             self.stride = 32  # Default stride for YOLOv5
-            self.names = {0: 'alligator cracking', 1: 'edge cracking', 2: 'longitudinal cracking', 
-                         3: 'patching', 4: 'pothole', 5: 'rutting', 6: 'transverse cracking'}
+            self.names = {0: 'Alligator_Crack', 1: 'Longitudinal_Crack', 
+                         2: 'Pothole', 3: 'Transverse_Crack'}
             self.pt = False  # Not PyTorch model
             self.imgsz = 640  # Default image size
             
@@ -776,10 +784,10 @@ class WorkerThread(QThread):
             
             # Run inference
             with torch.no_grad():
-                pred = self.model(im, augment=False, visualize=False)
+                pred = self.model(im, augment=False, visualize=False)[0]
             
             # Apply NMS
-            pred = non_max_suppression(pred, 0.25, 0.45, None, False, max_det=1000)
+            pred = non_max_suppression(pred, 0.6, 0.45, None, False, max_det=1000)
             
             # Process predictions
             annotated = frame.copy()
@@ -904,7 +912,7 @@ class WorkerThread(QThread):
                         pred_tensor = pred
                     
                     # Apply NMS (same as PyTorch version)
-                    pred_nms = non_max_suppression(pred_tensor, 0.25, 0.45, None, False, max_det=1000)
+                    pred_nms = non_max_suppression(pred_tensor, 0.6, 0.45, None, False, max_det=1000)
                     
                     # Process predictions
                     annotated = frame.copy()
